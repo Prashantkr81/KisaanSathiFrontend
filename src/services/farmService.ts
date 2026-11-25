@@ -1,29 +1,33 @@
-
 import { apiRequest } from "./api";
 
 export type Farm = {
   id: number;
-  state: string;
-  district: string;
+  farmName: string;
+  // Area is stored in hectares.
   landArea: number;
-  soilType: string;
-  irrigationType: string;
-  previousCrop: string | null;
+  currentCrop: string | null;
+  pastCrop: string | null;
+  cropSowedDate: string | null;
+  state?: string | null;
+  district?: string | null;
+  soilType?: string | null;
+  irrigationType?: string | null;
 };
 
 export type FarmRequest = {
-  state: string;
-  district: string;
+  farmName: string;
   landArea: number;
-  soilType: string;
-  irrigationType: string;
-  previousCrop: string | null;
+  currentCrop: string | null;
+  pastCrop: string | null;
+  cropSowedDate: string | null;
 };
 
 export function getMyFarms(): Promise<Farm[]> {
-  return apiRequest<Farm[]>("/api/farms", {
-    method: "GET",
-  });
+  return apiRequest<Farm[]>("/api/farms", { method: "GET" });
+}
+
+export function getFarmById(id: number): Promise<Farm> {
+  return apiRequest<Farm>(`/api/farms/${id}`, { method: "GET" });
 }
 
 export function addFarm(data: FarmRequest): Promise<Farm> {
