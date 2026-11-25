@@ -31,7 +31,7 @@ export default function HomeScreen() {
             </Text>
 
             <Text style={styles.heading}>
-              Namaste, Farmer!
+              Namaste, Kisaan!
             </Text>
 
             <View style={styles.location}>

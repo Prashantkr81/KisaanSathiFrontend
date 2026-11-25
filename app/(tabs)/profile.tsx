@@ -1,47 +1,188 @@
 
-import { View, Text, StyleSheet } from "react-native";
+import React, { useEffect, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  Alert,
+} from "react-native";
+import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { COLORS } from "../../src/constants/theme";
+
+import { getMyProfile, FarmerProfile } from "../../src/services/farmerService";
+import { logoutUser } from "../../src/services/authService";
+
+const COLORS = {
+  background: "#F5F7EF",
+  primary: "#174D32",
+  leaf: "#286B46",
+  sage: "#E8EDE3",
+  text: "#343B34",
+  muted: "#788276",
+  border: "#DFE5D9",
+  white: "#FFFFFF",
+  error: "#C7473A",
+};
 
 export default function ProfileScreen() {
+  const [profile, setProfile] = useState<FarmerProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const loadProfile = async () => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const data = await getMyProfile();
+      setProfile(data);
+    } catch (err: any) {
+      setError(err.message || "Unable to load profile.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProfile();
+  }, []);
+
+  const handleLogout = async () => {
+    await logoutUser();
+    router.replace("/login");
+  };
+
+  const confirmLogout = () => {
+    Alert.alert(
+      "Logout",
+      "Are you sure you want to logout?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Logout", style: "destructive", onPress: handleLogout },
+      ]
+    );
+  };
+
   return (
-    <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>My Profile</Text>
-      <Text style={styles.subtitle}>
-        Manage your farming information.
-      </Text>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+    >
+      <View style={styles.header}>
+        <Text style={styles.heading}>My Profile</Text>
 
-      <View style={styles.profileCard}>
-        <View style={styles.avatar}>
-          <Ionicons name="person" size={35} color={COLORS.primary} />
+        <Pressable onPress={loadProfile} style={styles.refreshButton}>
+          <Ionicons name="refresh-outline" size={21} color={COLORS.primary} />
+        </Pressable>
+      </View>
+
+      {loading ? (
+        <ActivityIndicator
+          size="large"
+          color={COLORS.primary}
+          style={{ marginTop: 50 }}
+        />
+      ) : error ? (
+        <View style={styles.errorCard}>
+          <Ionicons
+            name="alert-circle-outline"
+            size={28}
+            color={COLORS.error}
+          />
+          <Text style={styles.errorText}>{error}</Text>
+
+          <Pressable style={styles.retryButton} onPress={loadProfile}>
+            <Text style={styles.retryText}>Retry</Text>
+          </Pressable>
+
+          {error.includes("Session expired") && (
+            <Pressable onPress={handleLogout}>
+              <Text style={styles.retryText}>Login again</Text>
+            </Pressable>
+          )}
         </View>
-        <Text style={styles.name}>Farmer</Text>
-        <Text style={styles.location}>Location not added</Text>
-      </View>
+      ) : profile ? (
+        <>
+          <View style={styles.profileCard}>
+            <View style={styles.avatar}>
+              <Ionicons name="person" size={42} color={COLORS.white} />
+            </View>
 
-      <View style={styles.infoCard}>
-        <ProfileItem icon="person-outline" label="Personal Details" />
-        <ProfileItem icon="location-outline" label="Farm Location" />
-        <ProfileItem icon="leaf-outline" label="Land & Soil Details" />
-        <ProfileItem icon="settings-outline" label="Settings" />
-      </View>
-    </SafeAreaView>
+            <Text style={styles.name}>{profile.fullName}</Text>
+
+            <View style={styles.roleBadge}>
+              <Text style={styles.roleText}>{profile.role}</Text>
+            </View>
+          </View>
+
+          <Text style={styles.sectionTitle}>Account Information</Text>
+
+          <View style={styles.detailsCard}>
+            <ProfileRow
+              icon="person-outline"
+              label="Full Name"
+              value={profile.fullName}
+            />
+
+            <View style={styles.divider} />
+
+            <ProfileRow
+              icon="call-outline"
+              label="Mobile Number"
+              value={profile.phoneNumber}
+            />
+
+            <View style={styles.divider} />
+
+            <ProfileRow
+              icon="shield-checkmark-outline"
+              label="Account Role"
+              value={profile.role}
+            />
+
+            <View style={styles.divider} />
+
+            <ProfileRow
+              icon="finger-print-outline"
+              label="Farmer ID"
+              value={`KS-${profile.id}`}
+            />
+          </View>
+
+          <Text style={styles.sectionTitle}>Account</Text>
+
+          <Pressable style={styles.logoutButton} onPress={confirmLogout}>
+            <Ionicons name="log-out-outline" size={21} color={COLORS.error} />
+            <Text style={styles.logoutText}>Logout</Text>
+          </Pressable>
+        </>
+      ) : null}
+    </ScrollView>
   );
 }
 
-function ProfileItem({
+function ProfileRow({
   icon,
   label,
+  value,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  value: string;
 }) {
   return (
-    <View style={styles.item}>
-      <Ionicons name={icon} size={21} color={COLORS.primary} />
-      <Text style={styles.itemText}>{label}</Text>
-      <Ionicons name="chevron-forward" size={18} color={COLORS.muted} />
+    <View style={styles.profileRow}>
+      <View style={styles.rowIcon}>
+        <Ionicons name={icon} size={20} color={COLORS.primary} />
+      </View>
+
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowLabel}>{label}</Text>
+        <Text style={styles.rowValue}>{value}</Text>
+      </View>
     </View>
   );
 }
@@ -50,62 +191,139 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
-    padding: 20,
   },
-  title: {
-    fontSize: 25,
+  content: {
+    padding: 20,
+    paddingBottom: 40,
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 22,
+  },
+  heading: {
+    fontSize: 27,
     fontWeight: "800",
     color: COLORS.primary,
   },
-  subtitle: {
-    color: COLORS.muted,
-    fontSize: 14,
-    marginTop: 8,
-  },
-  profileCard: {
-    alignItems: "center",
+  refreshButton: {
     backgroundColor: COLORS.sage,
-    padding: 25,
-    borderRadius: 20,
-    marginTop: 25,
-  },
-  avatar: {
-    backgroundColor: COLORS.accent,
-    width: 75,
-    height: 75,
-    borderRadius: 40,
+    width: 42,
+    height: 42,
+    borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
   },
+  profileCard: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 19,
+    alignItems: "center",
+    padding: 26,
+    marginBottom: 25,
+  },
+  avatar: {
+    width: 85,
+    height: 85,
+    borderRadius: 28,
+    backgroundColor: COLORS.leaf,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 13,
+  },
   name: {
-    fontSize: 19,
+    color: COLORS.white,
+    fontSize: 21,
     fontWeight: "800",
+  },
+  roleBadge: {
+    backgroundColor: COLORS.accent,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    marginTop: 11,
+  },
+  roleText: {
     color: COLORS.primary,
-    marginTop: 12,
+    fontSize: 11,
+    fontWeight: "800",
   },
-  location: {
-    fontSize: 12,
-    color: COLORS.muted,
-    marginTop: 5,
+  sectionTitle: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: "800",
+    marginBottom: 12,
   },
-  infoCard: {
-    backgroundColor: COLORS.surface,
+  detailsCard: {
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 15,
     paddingHorizontal: 15,
-    borderRadius: 16,
-    marginTop: 20,
+    marginBottom: 24,
   },
-  item: {
+  profileRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 18,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    paddingVertical: 15,
     gap: 12,
   },
-  itemText: {
-    flex: 1,
-    fontSize: 14,
+  rowIcon: {
+    width: 40,
+    height: 40,
+    backgroundColor: COLORS.sage,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rowLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+  },
+  rowValue: {
     color: COLORS.text,
-    fontWeight: "600",
+    fontSize: 14,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+  },
+  logoutButton: {
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 13,
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+  },
+  logoutText: {
+    color: COLORS.error,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  errorCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: 15,
+    padding: 22,
+    alignItems: "center",
+    gap: 12,
+  },
+  errorText: {
+    color: COLORS.error,
+    textAlign: "center",
+  },
+  retryButton: {
+    backgroundColor: COLORS.sage,
+    borderRadius: 9,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+  },
+  retryText: {
+    color: COLORS.primary,
+    fontWeight: "700",
   },
 });

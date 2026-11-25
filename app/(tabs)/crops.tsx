@@ -7,6 +7,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { Picker } from "@react-native-picker/picker";
 import { Ionicons } from "@expo/vector-icons";
@@ -18,19 +19,28 @@ import {
   SPACING,
   RADIUS,
 } from "../../src/constants/theme";
-
 import {
   getWeather,
-  WeatherData,
+  type WeatherData,
 } from "../../src/services/weatherService";
-
-type Crop = {
-  name: string;
-  duration: string;
-  reason: string;
-};
+import {
+  getGeminiCropRecommendations,
+  type GeminiCrop,
+} from "../../src/services/geminiCropService";
 
 const FARM_DETAILS_KEY = "kisaan_sathi_farm_details";
+
+type Crop = GeminiCrop;
+
+type SavedFarmDetails = {
+  state?: string;
+  district?: string;
+  landArea?: string | number;
+  soil?: string;
+  season?: string;
+  irrigation?: string;
+  previousCrop?: string;
+};
 
 const soilOptions = [
   "Alluvial",
@@ -59,86 +69,6 @@ const previousCropOptions = [
   "Other",
 ];
 
-// Initial demo rules only. These are not scientifically validated recommendations.
-function getRecommendations(
-  soil: string,
-  season: string,
-  irrigation: string
-): Crop[] {
-  if (season === "Kharif") {
-    if (soil === "Black") {
-      return [
-        {
-          name: "Soybean",
-          duration: "90-120 days",
-          reason: "A potential option for black soil in Kharif.",
-        },
-        {
-          name: "Cotton",
-          duration: "150-180 days",
-          reason: "A potential commercial crop for black soil.",
-        },
-      ];
-    }
-
-    if (soil === "Clayey" && irrigation === "Adequate irrigation") {
-      return [
-        {
-          name: "Rice",
-          duration: "120-150 days",
-          reason: "Clayey soil can retain water for rice cultivation.",
-        },
-        {
-          name: "Maize",
-          duration: "90-110 days",
-          reason: "An alternative Kharif crop to evaluate.",
-        },
-      ];
-    }
-
-    return [
-      {
-        name: "Maize",
-        duration: "90-110 days",
-        reason: "A common Kharif crop to consider.",
-      },
-      {
-        name: "Groundnut",
-        duration: "100-120 days",
-        reason: "A potential option depending on soil drainage.",
-      },
-    ];
-  }
-
-  if (season === "Rabi") {
-    return [
-      {
-        name: "Wheat",
-        duration: "110-150 days",
-        reason: "A major Rabi crop in suitable growing conditions.",
-      },
-      {
-        name: "Mustard",
-        duration: "110-140 days",
-        reason: "An oilseed crop to consider for the Rabi season.",
-      },
-    ];
-  }
-
-  return [
-    {
-      name: "Green Gram",
-      duration: "60-75 days",
-      reason: "A short-duration summer pulse crop to consider.",
-    },
-    {
-      name: "Watermelon",
-      duration: "80-100 days",
-      reason: "A summer crop requiring suitable irrigation and soil.",
-    },
-  ];
-}
-
 export default function CropsScreen() {
   const [state, setState] = useState("");
   const [district, setDistrict] = useState("");
@@ -150,37 +80,53 @@ export default function CropsScreen() {
   const [previousCrop, setPreviousCrop] = useState("None");
 
   const [results, setResults] = useState<Crop[] | null>(null);
+  const [aiAdvice, setAiAdvice] = useState("");
+  const [aiCaution, setAiCaution] = useState("");
+  const [recommendationLoading, setRecommendationLoading] = useState(false);
+  const [recommendationError, setRecommendationError] = useState("");
 
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState("");
 
-  // Load previously saved farm details when this screen opens.
+  // Restore the farmer's last-used advisory inputs on screen open.
   useEffect(() => {
     const loadFarmDetails = async () => {
       try {
         const savedData = await AsyncStorage.getItem(FARM_DETAILS_KEY);
+        if (!savedData) return;
 
-        if (savedData) {
-          const farmDetails = JSON.parse(savedData);
-
-          setState(farmDetails.state ?? "");
-          setDistrict(farmDetails.district ?? "");
-          setLandArea(farmDetails.landArea ?? "");
-          setSoil(farmDetails.soil ?? "Alluvial");
-          setSeason(farmDetails.season ?? "Rabi");
-          setIrrigation(
-            farmDetails.irrigation ?? "Adequate irrigation"
-          );
-          setPreviousCrop(farmDetails.previousCrop ?? "None");
-        }
+        const farmDetails = JSON.parse(savedData) as SavedFarmDetails;
+        setState(farmDetails.state ?? "");
+        setDistrict(farmDetails.district ?? "");
+        setLandArea(
+          farmDetails.landArea === undefined
+            ? ""
+            : String(farmDetails.landArea)
+        );
+        setSoil(farmDetails.soil ?? "Alluvial");
+        setSeason(farmDetails.season ?? "Rabi");
+        setIrrigation(farmDetails.irrigation ?? "Adequate irrigation");
+        setPreviousCrop(farmDetails.previousCrop ?? "None");
       } catch (error) {
-        console.log("Error loading farm details:", error);
+        console.log("Error loading saved farm details:", error);
       }
     };
 
-    loadFarmDetails();
+    void loadFarmDetails();
   }, []);
+
+  const clearRecommendations = () => {
+    setResults(null);
+    setAiAdvice("");
+    setAiCaution("");
+    setRecommendationError("");
+  };
+
+  const clearWeatherWhenLocationChanges = () => {
+    setWeather(null);
+    setWeatherError("");
+  };
 
   const loadWeather = async () => {
     if (!state.trim() || !district.trim()) {
@@ -192,15 +138,13 @@ export default function CropsScreen() {
     try {
       setWeatherLoading(true);
       setWeatherError("");
-
       const data = await getWeather(district.trim(), state.trim());
       setWeather(data);
+      clearRecommendations();
     } catch (error) {
       setWeather(null);
       setWeatherError(
-        error instanceof Error
-          ? error.message
-          : "Unable to load weather."
+        error instanceof Error ? error.message : "Unable to load weather."
       );
     } finally {
       setWeatherLoading(false);
@@ -226,37 +170,64 @@ export default function CropsScreen() {
       return;
     }
 
-    // Save the farmer's details locally.
-    try {
-      const farmDetails = {
-        state: state.trim(),
-        district: district.trim(),
-        landArea,
-        soil,
-        season,
-        irrigation,
-        previousCrop,
-      };
+    setRecommendationLoading(true);
+    clearRecommendations();
 
+    // Save inputs locally so the farmer does not need to enter them again.
+    const farmDetails: SavedFarmDetails = {
+      state: state.trim(),
+      district: district.trim(),
+      landArea,
+      soil,
+      season,
+      irrigation,
+      previousCrop,
+    };
+
+    try {
       await AsyncStorage.setItem(
         FARM_DETAILS_KEY,
         JSON.stringify(farmDetails)
       );
     } catch (error) {
-      console.log("Error saving farm details:", error);
-      Alert.alert(
-        "Save warning",
-        "Recommendations can still be generated, but your farm details could not be saved."
-      );
+      console.log("Farm details could not be saved:", error);
     }
 
-    const recommendations = getRecommendations(
-      soil,
-      season,
-      irrigation
-    );
+    try {
+      const response = await getGeminiCropRecommendations({
+        state: state.trim(),
+        district: district.trim(),
+        landAreaAcres: area,
+        soilType: soil,
+        season,
+        irrigation,
+        previousCrop,
+        weather: weather
+          ? {
+              location: weather.location,
+              temperature: weather.temperature,
+              humidity: weather.humidity,
+              precipitation: weather.precipitation,
+              windSpeed: weather.windSpeed,
+              maxTemperature: weather.maxTemperature,
+              minTemperature: weather.minTemperature,
+              rainProbability: weather.rainProbability,
+            }
+          : undefined,
+      });
 
-    setResults(recommendations);
+      setResults(response.crops);
+      setAiAdvice(response.generalAdvice);
+      setAiCaution(response.caution);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to generate AI recommendations.";
+      setRecommendationError(message);
+    } finally {
+      setRecommendationLoading(false);
+    }
   };
 
   const resetForm = () => {
@@ -267,15 +238,10 @@ export default function CropsScreen() {
     setSeason("Rabi");
     setIrrigation("Adequate irrigation");
     setPreviousCrop("None");
-    setResults(null);
+    clearRecommendations();
     setWeather(null);
     setWeatherError("");
     // Saved details are intentionally retained in AsyncStorage.
-  };
-
-  const clearWeatherWhenLocationChanges = () => {
-    setWeather(null);
-    setWeatherError("");
   };
 
   return (
@@ -283,17 +249,16 @@ export default function CropsScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.heading}>Crop Advisory</Text>
-
         <Text style={styles.subtitle}>
-          Tell us about your farm to discover suitable crops.
+          Tell us about your farm to get AI-assisted crop suggestions.
         </Text>
 
         <View style={styles.formCard}>
           <Text style={styles.sectionTitle}>
-            <Ionicons name="location-outline" size={19} />
-            {" "}Farm Location
+            <Ionicons name="location-outline" size={19} /> {" "}Farm Location
           </Text>
 
           <FormLabel text="State" />
@@ -304,7 +269,7 @@ export default function CropsScreen() {
             value={state}
             onChangeText={(value) => {
               setState(value);
-              setResults(null);
+              clearRecommendations();
               clearWeatherWhenLocationChanges();
             }}
           />
@@ -317,20 +282,17 @@ export default function CropsScreen() {
             value={district}
             onChangeText={(value) => {
               setDistrict(value);
-              setResults(null);
+              clearRecommendations();
               clearWeatherWhenLocationChanges();
             }}
           />
 
-          {/* Weather advisory */}
           <View style={styles.weatherCard}>
             <Text style={styles.sectionTitle}>
-              <Ionicons name="cloud-outline" size={19} />
-              {" "}Weather Advisory
+              <Ionicons name="cloud-outline" size={19} /> {" "}Weather Advisory
             </Text>
-
             <Text style={styles.weatherHint}>
-              Check current weather for your entered district.
+              Fetch district-level weather to give Gemini more context.
             </Text>
 
             <TouchableOpacity
@@ -339,18 +301,20 @@ export default function CropsScreen() {
                 weatherLoading && styles.disabledButton,
               ]}
               onPress={loadWeather}
-              disabled={weatherLoading}
+              disabled={weatherLoading || recommendationLoading}
               activeOpacity={0.85}
             >
-              <Ionicons
-                name="cloud-download-outline"
-                size={18}
-                color="#FFFFFF"
-              />
+              {weatherLoading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Ionicons
+                  name="cloud-download-outline"
+                  size={18}
+                  color="#FFFFFF"
+                />
+              )}
               <Text style={styles.weatherButtonText}>
-                {weatherLoading
-                  ? "Fetching Weather..."
-                  : "Check Local Weather"}
+                {weatherLoading ? "Fetching Weather..." : "Check Local Weather"}
               </Text>
             </TouchableOpacity>
 
@@ -360,13 +324,8 @@ export default function CropsScreen() {
 
             {weather && (
               <View style={styles.weatherInfo}>
-                <Text style={styles.weatherLocation}>
-                  {weather.location}
-                </Text>
-
-                <Text style={styles.temperature}>
-                  {weather.temperature}°C
-                </Text>
+                <Text style={styles.weatherLocation}>{weather.location}</Text>
+                <Text style={styles.temperature}>{weather.temperature}°C</Text>
 
                 <View style={styles.weatherGrid}>
                   <WeatherMetric
@@ -402,8 +361,8 @@ export default function CropsScreen() {
                 </View>
 
                 <Text style={styles.weatherDisclaimer}>
-                  Weather data is approximate for the selected district,
-                  not a measurement from your exact farm.
+                  Weather data is approximate for the selected district, not a
+                  measurement from your exact farm.
                 </Text>
               </View>
             )}
@@ -412,8 +371,7 @@ export default function CropsScreen() {
           <View style={styles.divider} />
 
           <Text style={styles.sectionTitle}>
-            <Ionicons name="leaf-outline" size={19} />
-            {" "}Farm Details
+            <Ionicons name="leaf-outline" size={19} /> {" "}Farm Details
           </Text>
 
           <FormLabel text="Land Area (Acres)" />
@@ -425,7 +383,7 @@ export default function CropsScreen() {
             value={landArea}
             onChangeText={(value) => {
               setLandArea(value);
-              setResults(null);
+              clearRecommendations();
             }}
           />
 
@@ -435,7 +393,7 @@ export default function CropsScreen() {
             options={soilOptions}
             onChange={(value) => {
               setSoil(value);
-              setResults(null);
+              clearRecommendations();
             }}
           />
 
@@ -445,7 +403,7 @@ export default function CropsScreen() {
             options={seasonOptions}
             onChange={(value) => {
               setSeason(value);
-              setResults(null);
+              clearRecommendations();
             }}
           />
 
@@ -455,7 +413,7 @@ export default function CropsScreen() {
             options={irrigationOptions}
             onChange={(value) => {
               setIrrigation(value);
-              setResults(null);
+              clearRecommendations();
             }}
           />
 
@@ -465,66 +423,90 @@ export default function CropsScreen() {
             options={previousCropOptions}
             onChange={(value) => {
               setPreviousCrop(value);
-              setResults(null);
+              clearRecommendations();
             }}
           />
 
           <TouchableOpacity
-            style={styles.submitButton}
+            style={[
+              styles.submitButton,
+              recommendationLoading && styles.disabledButton,
+            ]}
             onPress={handleRecommendation}
             activeOpacity={0.85}
+            disabled={recommendationLoading || weatherLoading}
           >
-            <Ionicons
-              name="sparkles-outline"
-              size={19}
-              color="#FFFFFF"
-            />
+            {recommendationLoading ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Ionicons name="sparkles-outline" size={19} color="#FFFFFF" />
+            )}
             <Text style={styles.submitText}>
-              Get Crop Recommendations
+              {recommendationLoading
+                ? "Gemini is analysing your farm..."
+                : "Get AI Crop Recommendations"}
             </Text>
           </TouchableOpacity>
+
+          {recommendationError ? (
+            <View style={styles.errorBox}>
+              <Ionicons
+                name="alert-circle-outline"
+                size={19}
+                color={COLORS.error}
+              />
+              <Text style={styles.errorText}>{recommendationError}</Text>
+            </View>
+          ) : null}
         </View>
 
         {results && (
           <View style={styles.resultsContainer}>
-            <Text style={styles.resultHeading}>
-              Recommended Crops
-            </Text>
+            <View style={styles.resultsTitleRow}>
+              <View>
+                <Text style={styles.resultHeading}>Recommended Crops</Text>
+                <Text style={styles.resultSubtitle}>
+                  AI-assisted options based on your farm inputs
+                  {weather ? " and available weather data." : "."}
+                </Text>
+              </View>
+              <View style={styles.aiBadge}>
+                <Ionicons name="sparkles" size={13} color={COLORS.primary} />
+                <Text style={styles.aiBadgeText}>Gemini AI</Text>
+              </View>
+            </View>
 
-            <Text style={styles.resultSubtitle}>
-              Based on your selected soil and season.
-            </Text>
+            {aiAdvice ? (
+              <View style={styles.adviceCard}>
+                <Ionicons
+                  name="bulb-outline"
+                  size={21}
+                  color={COLORS.primary}
+                />
+                <Text style={styles.adviceText}>{aiAdvice}</Text>
+              </View>
+            ) : null}
 
             {results.map((crop, index) => (
-              <View key={crop.name} style={styles.resultCard}>
+              <View key={`${crop.name}-${index}`} style={styles.resultCard}>
                 <View style={styles.resultTop}>
                   <View style={styles.cropIcon}>
-                    <Ionicons
-                      name="leaf"
-                      size={25}
-                      color={COLORS.primary}
-                    />
+                    <Ionicons name="leaf" size={25} color={COLORS.primary} />
                   </View>
 
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.cropName}>
-                      {crop.name}
-                    </Text>
+                  <View style={styles.cropDetails}>
+                    <Text style={styles.cropName}>{crop.name}</Text>
                     <Text style={styles.duration}>
-                      {crop.duration}
+                      Indicative duration: {crop.duration}
                     </Text>
                   </View>
 
                   <View style={styles.rankBadge}>
-                    <Text style={styles.rankText}>
-                      Option {index + 1}
-                    </Text>
+                    <Text style={styles.rankText}>Option {index + 1}</Text>
                   </View>
                 </View>
 
-                <Text style={styles.reason}>
-                  {crop.reason}
-                </Text>
+                <Text style={styles.reason}>{crop.reason}</Text>
               </View>
             ))}
 
@@ -535,17 +517,12 @@ export default function CropsScreen() {
                 color={COLORS.primary}
               />
               <Text style={styles.disclaimerText}>
-                These are preliminary demo suggestions, not validated
-                agronomic advice. Actual suitability depends on local
-                climate, soil test results, water availability and
-                regional crop guidance.
+                {aiCaution ||
+                  "These AI-generated suggestions are preliminary. Verify crop suitability with local agricultural experts before sowing."}
               </Text>
             </View>
 
-            <TouchableOpacity
-              style={styles.resetButton}
-              onPress={resetForm}
-            >
+            <TouchableOpacity style={styles.resetButton} onPress={resetForm}>
               <Text style={styles.resetText}>Try Again</Text>
             </TouchableOpacity>
           </View>
@@ -581,11 +558,7 @@ function Dropdown({
         dropdownIconColor={COLORS.primary}
       >
         {options.map((option) => (
-          <Picker.Item
-            key={option}
-            label={option}
-            value={option}
-          />
+          <Picker.Item key={option} label={option} value={option} />
         ))}
       </Picker>
     </View>
@@ -603,11 +576,7 @@ function WeatherMetric({
 }) {
   return (
     <View style={styles.weatherMetric}>
-      <Ionicons
-        name={icon}
-        size={18}
-        color={COLORS.primary}
-      />
+      <Ionicons name={icon} size={18} color={COLORS.primary} />
       <View style={styles.weatherMetricText}>
         <Text style={styles.weatherMetricLabel}>{label}</Text>
         <Text style={styles.weatherMetricValue}>{value}</Text>
@@ -687,7 +656,8 @@ const styles = StyleSheet.create({
   submitButton: {
     backgroundColor: COLORS.primary,
     borderRadius: 12,
-    height: 52,
+    minHeight: 52,
+    paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
@@ -698,9 +668,35 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 14,
     fontWeight: "800",
+    textAlign: "center",
+  },
+  disabledButton: {
+    opacity: 0.65,
+  },
+  errorBox: {
+    backgroundColor: "#FCE8E6",
+    padding: 12,
+    borderRadius: 11,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 13,
+  },
+  errorText: {
+    color: COLORS.error,
+    fontSize: 12,
+    lineHeight: 18,
+    flex: 1,
   },
   resultsContainer: {
     marginTop: 25,
+  },
+  resultsTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 15,
   },
   resultHeading: {
     fontSize: 21,
@@ -711,7 +707,38 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontSize: 12,
     marginTop: 5,
-    marginBottom: 15,
+    lineHeight: 18,
+  },
+  aiBadge: {
+    backgroundColor: COLORS.sage,
+    borderRadius: 9,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  aiBadgeText: {
+    color: COLORS.primary,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  adviceCard: {
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.md,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 9,
+    marginBottom: 13,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  adviceText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 19,
+    color: COLORS.text,
   },
   resultCard: {
     backgroundColor: COLORS.surface,
@@ -731,6 +758,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.sage,
     alignItems: "center",
     justifyContent: "center",
+  },
+  cropDetails: {
+    flex: 1,
   },
   cropName: {
     color: COLORS.primary,
@@ -764,6 +794,7 @@ const styles = StyleSheet.create({
     padding: 13,
     borderRadius: 12,
     flexDirection: "row",
+    alignItems: "flex-start",
     gap: 9,
     marginTop: 8,
   },
@@ -815,9 +846,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
     marginTop: 5,
-  },
-  disabledButton: {
-    opacity: 0.65,
   },
   weatherButtonText: {
     color: "#FFFFFF",
