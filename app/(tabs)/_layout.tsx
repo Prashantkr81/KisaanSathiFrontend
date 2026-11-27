@@ -1,4 +1,3 @@
-
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 
@@ -80,6 +79,14 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="person-outline" color={color} size={size} />
           ),
+        }}
+      />
+
+      {/* Details is a pushed screen, not a separate bottom tab. */}
+      <Tabs.Screen
+        name="farm/[id]"
+        options={{
+          href: null,
         }}
       />
     </Tabs>

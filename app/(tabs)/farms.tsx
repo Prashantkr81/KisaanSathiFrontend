@@ -119,7 +119,10 @@ export default function FarmsScreen() {
   const totalArea = farms.reduce((sum, farm) => sum + (Number(farm.landArea) || 0), 0);
 
   const openFarm = (farm: Farm) => {
-    router.push({ pathname: "/(tabs)/farm/[id]", params: { id: String(farm.id) } } as any);
+    router.push({
+      pathname: "/farm/[id]",
+      params: { id: String(farm.id) },
+    } as any);
   };
 
   return (
